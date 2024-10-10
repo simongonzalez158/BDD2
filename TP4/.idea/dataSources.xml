@@ -5,7 +5,14 @@
       <driver-ref>postgresql</driver-ref>
       <synchronize>true</synchronize>
       <jdbc-driver>org.postgresql.Driver</jdbc-driver>
-      <jdbc-url>jdbc:postgresql://dbases.exa.unicen.edu.ar:6432/Ing24</jdbc-url>
+      <jdbc-url>jdbc:postgresql://dbases.exa.unicen.edu.ar:5432/Ing24</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
+    <data-source source="LOCAL" name="Ing24at_home@dbases.exa.unicen.edu.ar" uuid="e722efda-f178-4d7e-b31f-5ef8352434dd">
+      <driver-ref>postgresql</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.postgresql.Driver</jdbc-driver>
+      <jdbc-url>jdbc:postgresql://dbases.exa.unicen.edu.ar:6432/postgres</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
   </component>
