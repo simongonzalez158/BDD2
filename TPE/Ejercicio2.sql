@@ -3,39 +3,111 @@
 
 -- declararemos una funcion ya que esta puede ser invocada por alguien o algo.
 
+CREATE SEQUENCE comprobante_seq
+    START WITH 1
+    INCREMENT BY 1
+    MINVALUE 1
+    NO CYCLE;
+
+    CREATE SEQUENCE linea_seq
+    START WITH 1
+    INCREMENT BY 1
+    MINVALUE 1
+    NO CYCLE;
+
 CREATE OR REPLACE PROCEDURE pr_2a()
-language plpgsql
-as $$
+LANGUAGE plpgsql
+AS $$
 DECLARE
-    registro RECORD;
-    id_factura BIGINT;
-    seq_id_comprobante SERIAL; -- ???????????????????
+    cliente record;
+    equipo record;
+    servicio record;
+    factura_id bigint;
+    cantidad int := 1;
 BEGIN
-    FOR registro IN
-        SELECT c.id_cliente, s.id_servicio, s.costo, s.nombre AS nombre_servicio
+    FOR cliente IN
+        SELECT c.id_cliente
         FROM cliente c
         JOIN persona p ON c.id_cliente = p.id_persona
-        JOIN equipo e ON c.id_cliente = e.id_cliente
-        JOIN servicio s ON e.id_servicio = s.id_servicio
-        WHERE s.periodico and p.activo and e.fecha_baja IS NULL
+        WHERE p.activo
     LOOP
-        INSERT INTO comprobante(id_comp, id_tcomp, fecha, estado, importe, id_cliente) -- no puse comentario, fecha_vencimiento, id_turno, id_lugar
-        VALUES (nextval('seq_id_comprobante'), 1, current_date, 'pendiente', 0, registro.id_cliente)
-        RETURNING id_comp INTO id_factura;
+        INSERT INTO comprobante (id_comp, id_tcomp, fecha, comentario, estado, fecha_vencimiento, id_turno, importe, id_cliente, id_lugar)
+        VALUES (nextval('comprobante_seq'), 1, now(), 'factura mensual', 'pendiente', now() + interval '30 days', null, 0, cliente.id_cliente, 1)
+        RETURNING id_comp INTO factura_id;
 
-        INSERT INTO lineacomprobante (nro_linea, id_comp, id_tcomp, descripcion, cantidad, importe, id_servicio)
-        VALUES ( (
-                SELECT coalesce(MAX(nro_linea),0) + 1
-                FROM lineacomprobante
-                WHERE id_comp = id_factura), id_factura, 1, registro.nombre_servicio, 1, registro.costo, registro.id_servicio);
+        FOR equipo IN
+            SELECT id_equipo, nombre, mac, ip, ap, id_servicio, id_cliente, fecha_alta, fecha_baja, tipo_conexion, tipo_asignacion
+            FROM equipo e
+            WHERE e.id_cliente = cliente.id_cliente
+        LOOP
+            FOR servicio IN
+                SELECT id_servicio, nombre, periodico, costo, intervalo, tipo_intervalo, activo, id_cat
+                FROM servicio s
+                WHERE s.id_servicio = equipo.id_servicio AND s.periodico
+            LOOP
+                INSERT INTO lineacomprobante(nro_linea, id_comp, id_tcomp, descripcion, cantidad, importe, id_servicio)
+                VALUES (nextval('linea_seq'), factura_id, 1, servicio.nombre, cantidad, servicio.costo, servicio.id_servicio);
 
-        UPDATE comprobante
-        SET importe = (SELECT SUM(importe) FROM lineacomprobante WHERE id_comp = id_factura)
-        WHERE id_comp = id_factura;
-        end loop;
-end; $$;
+                UPDATE comprobante
+                SET importe = importe + (cantidad * servicio.costo)
+                WHERE id_comp = factura_id;
+
+            END LOOP;
+        END LOOP;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE SEQUENCE comprobante_seq
+    START WITH 1
+    INCREMENT BY 1
+    MINVALUE 1
+    NO CYCLE;
+
+    CREATE SEQUENCE linea_seq
+    START WITH 1
+    INCREMENT BY 1
+    MINVALUE 1
+    NO CYCLE;
+
+CREATE OR REPLACE PROCEDURE pr_2a()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    cliente record;
+    equipo record;
+    servicio record;
+    factura_id bigint;
+    cantidad int;
+BEGIN
+    FOR cliente IN
+        SELECT c.id_cliente
+        FROM cliente c
+        JOIN persona p ON c.id_cliente = p.id_persona
+        WHERE p.activo
+    LOOP
+        INSERT INTO comprobante (id_comp, id_tcomp, fecha, comentario, estado, fecha_vencimiento, id_turno, importe, id_cliente, id_lugar)
+        VALUES (nextval('comprobante_seq'), 1, now(), 'factura mensual', 'pendiente', now() + interval '30 days', null, 0, cliente.id_cliente, 1)
+        RETURNING id_comp INTO factura_id;
 
 
+            FOR servicio IN
+                SELECT id_servicio, nombre, periodico, costo, intervalo, tipo_intervalo, activo, id_cat, count(*) into cantidad
+                FROM servicio s
+                WHERE s.id_servicio = equipo.id_servicio AND s.periodico
+                GROUP BY id_servicio, nombre, periodico, costo, intervalo, tipo_intervalo, activo, id_cat
+            LOOP
+                INSERT INTO lineacomprobante(nro_linea, id_comp, id_tcomp, descripcion, cantidad, importe, id_servicio)
+                VALUES (nextval('linea_seq'), factura_id, 1, servicio.nombre, cantidad, servicio.costo, servicio.id_servicio);
+
+                UPDATE comprobante
+                SET importe = importe + (cantidad * servicio.costo)
+                WHERE id_comp = factura_id;
+
+            END LOOP;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
 
 -- 2b. Al ser invocado entre dos fechas cualesquiera genere un informe de los empleados (personal) junto con la cantidad de clientes distintos que
 -- cada uno ha atendido en tal periodo y los tiempos promedio y máximo del conjunto de turnos atendidos en el periodo.
@@ -63,14 +135,21 @@ BEGIN
             per.id_personal AS id_empleado,
             CONCAT(p.nombre, ' ', p.apellido) AS nombre_apellido,
             count(distinct c.id_cliente) AS cant_clientes,
-            AVG(t.hasta - t.desde) AS tiempo_promedio,
-            MAX(t.hasta - t.desde) AS tiempo_max
+            --AVG(t.hasta - t.desde) AS tiempo_promedio,
+            --MAX(t.hasta - t.desde) AS tiempo_max,
 
-        FROM turno t JOIN personal per ON (t.id_personal = per.id_personal)
-        JOIN persona p ON (per.id_personal = p.id_persona)
-        JOIN comprobante c ON (t.id_turno = c.id_turno)
-        WHERE t.desde BETWEEN (fecha_inicio, fecha_fin) --  and c.fecha BETWEEN (fecha_inicio, fecha_fin) redundante ?
-        GROUP BY per.id_personal, p.nombre, p.apellido;
+            AVG(CASE WHEN t.hasta IS NOT NULL THEN t.hasta - t.desde ELSE now() - t.desde END) AS tiempo_promedio,
+            MAX(CASE WHEN t.hasta IS NOT NULL THEN t.hasta - t.desde ELSE now() - t.desde END) AS tiempo_max
+
+        FROM turno t JOIN personal per ON t.id_personal = per.id_personal        -- right join para considerar personal sin turnos. en el sistema el personal siempre tiene un turno, el RIGHT JOIN no sería necesario. En su lugar, un INNER JOIN con personal y turno debería ser suficiente.
+        JOIN persona p ON per.id_personal = p.id_persona
+        JOIN comprobante c ON t.id_turno = c.id_turno
+        WHERE t.desde BETWEEN (fecha_inicio, fecha_fin) -- and t.hasta is not null -- and c.fecha BETWEEN (fecha_inicio, fecha_fin) redundante ? si
+        GROUP BY per.id_personal;
 end;
 $$
- -- personal sin turnos
+-- consideramos utilizar now() para calcular los tiempos promedio y máximo de los turnos que se estan realizando en este momento
+
+-- para turnos ya finalizados o lo
+ -- considerar personal sin turnos -- pero siempre un personal tiene turno. asi que porqué??
+ -- el atributo 'hasta' nomas puede ser null. considerar???

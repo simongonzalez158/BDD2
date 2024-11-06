@@ -1,5 +1,7 @@
 -- 3a. Vista1, que contenga el saldo de cada uno de los clientes menores de 30 años de la ciudad ‘Napoli, que posean más de 3 servicios.
 
+-- Esta vista es automáticamente actualizable, ya que no utiliza ensambles, ni funciones de agregación o de agrupamiento para su resolución.
+
 CREATE VIEW vista1 AS
     SELECT c.saldo FROM cliente c
     WHERE exists(
@@ -25,7 +27,9 @@ CREATE VIEW vista1 AS
                     )
                 )
             )
-    );
+    )
+    -- WITH CHECK OPTION
+    ;
 
 CREATE VIEW vista1 AS
     SELECT c.id_cliente, c.saldo
@@ -48,17 +52,17 @@ CREATE VIEW vista2 AS
     FROM cliente c
     JOIN persona p ON c.id_cliente = p.id_persona
     JOIN equipo e ON c.id_cliente = e.id_cliente
-    JOIN servicio s ON e.id_servicio = s.id_servicio
+    JOIN servicio s ON e.id_servicio = s.id_servicio -- left join?? no, pq queremos los servicios no nulos
 
-    WHERE p.activo and extract(year from p.fecha_alta) = extract(year from current_date) and s.activo;
+    WHERE p.activo and extract(year from p.fecha_alta) = extract(year from current_date) and s.activo; -- and e.id_Servicio not null ?
     --GROUP BY c.id_cliente, p.nombre, p.apellido, p.tipodoc, p.nrodoc, p.cuit
     --HAVING count(s.activo) >= 1; -- no es al pedo si pide los datos de los servicios activos??? pongo activo en el where y listo
 
--- La vista2 no es automaticamente actualizable
+-- La vista2 no es automaticamente actualizable porque la resolucion de ésta implica que se utilicen ensambles JOIN lo que en PostgreSQL no se permite
 
 CREATE OR REPLACE FUNCTION fn_update_vista2()
 RETURNS TRIGGER AS $$
-BEGIN                   -- falta equipo
+BEGIN
     UPDATE cliente
     SET saldo = NEW.saldo
     WHERE id_cliente = OLD.id_cliente;
@@ -70,44 +74,13 @@ BEGIN                   -- falta equipo
         tipodoc = new.tipodoc,
         nrodoc = new.nrodoc,
         cuit = new.cuit,
-        fecha_alta = new.fecha_alta         -- fecha alta por el where, tambien???
-    WHERE id_persona = OLD.cliente;
+        fecha_alta = new.fecha_alta  -- where
+    WHERE id_persona = OLD.id_cliente;
 
     UPDATE servicio
     SET nombre = new.nombre,
         costo = new.costo
     WHERE id_servicio = OLD.id_servicio;
-
-    RETURN NEW;
-end;
-$$ language plpgsql;
-
-CREATE OR REPLACE FUNCTION fn_update_vista2()
-RETURNS TRIGGER AS $$
-BEGIN                      -- falta servicio
-    UPDATE cliente
-    SET saldo = NEW.saldo
-    WHERE id_cliente = OLD.id_cliente;
-
-    UPDATE persona                    -- sobre todos los atributos, necesario ???
-    SET nombre = new.nombre,
-        apellido = new.apellido,
-        tipo = new.tipo,
-        tipodoc = new.tipodoc,
-        nrodoc = new.nrodoc,
-        cuit = new.cuit,
-        fecha_nacimiento = new.fecha_nacimiento,
-        fecha_alta = new.fecha_alta,
-        fecha_baja = new.fecha_baja,
-        activo = new.activo,
-        mail = new.mail,
-        telef_area = new.telef_area,
-        telef_numero = new.telef_numero
-    WHERE id_persona = OLD.cliente;
-
-    UPDATE equipo
-    SET id_servicio = NEW.id_servicio
-    WHERE id_cliente = OLD.id_cliente;
 
     RETURN NEW;
 end;
@@ -121,11 +94,11 @@ EXECUTE FUNCTION fn_update_vista2();
 CREATE OR REPLACE FUNCTION fn_insert_vista2()
 RETURNS TRIGGER AS $$               -- falta servicio
 BEGIN
+    INSERT INTO persona(id_persona, tipo, tipodoc, nrodoc, nombre, apellido, fecha_nacimiento, fecha_alta, fecha_baja, cuit, activo, mail, telef_area, telef_numero) -- activo true???
+    VALUES (new.id_persona, new.tipo, new.tipodoc, new.nrodoc, new.nombre, new.apellido, new.fecha_nacimiento, new.fecha_alta, new.fecha_baja, new.cuit, true, new.mail, new.telef_area, new.telef_numero);
+
     INSERT INTO cliente(id_cliente, saldo)
     VALUES (new.id_cliente, new.saldo);
-
-    INSERT INTO persona(id_persona, tipo, tipodoc, nrodoc, nombre, apellido, fecha_nacimiento, fecha_alta, fecha_baja, cuit, activo, mail, telef_area, telef_numero) -- activo true???
-    VALUES (new.id_persona, new.tipo, new.tipodoc, new.nrodoc, new.nombre, new.apellido, new.fecha_nacimiento, new.fecha_alta, new.fecha_baja, new.cuit, new.activo, new.mail, new.telef_area, new.telef_numero);
 
     INSERT INTO equipo (id_equipo, nombre, ip, ap, id_servicio, id_cliente, fecha_alta, fecha_baja, tipo_conexion, tipo_asignacion)
     VALUES(new.id_equipo, new.nombre, new.ip, new.ap, new.id_servicio, new.id_cliente, new.fecha_alta, new.fecha_baja, new.tipo_conexion, new.tipo_asignacion);
@@ -143,8 +116,8 @@ CREATE OR REPLACE FUNCTION fn_delete_vista2()       -- falta servicio
 RETURNS TRIGGER AS $$
 BEGIN
     delete from equipo where id_cliente = old.id_cliente;
-    delete from persona where id_persona = old.id_cliente;
     delete from cliente where id_cliente = old.id_cliente;
+    delete from persona where id_persona = old.id_cliente;
 
     RETURN old;
 end;
@@ -158,12 +131,15 @@ EXECUTE FUNCTION fn_delete_vista2();
 -- 3c. Vista3, que contenga, por cada uno de los servicios periódicos registrados en el sistema, los datos del servicio
 -- y el monto facturado mensualmente durante los últimos 5 años, ordenado por servicio, año, mes y monto.
 
+-- esta vista no es automaticamente actualizable por los datos que pide.
+-- Para realizarse se deben utilizar ensambles, funciones de agregacion y de agrupamiento
+
 CREATE VIEW vista3 AS
     SELECT s.id_servicio, s.nombre, s.costo, extract(year from c.fecha), extract(month from c.fecha), SUM(l.cantidad * l.importe) AS monto_facturado
     FROM servicio s
     JOIN lineacomprobante l ON s.id_servicio = l.id_servicio
     JOIN comprobante c ON l.id_comp = c.id_comp and l.id_tcomp = c.id_tcomp
-    WHERE s.periodico and (c.fecha >= current_date - INTERVAL '5 years') and c.fecha <= current_date  -- (extract(year from current_date) - extract(year from c.fecha) <= '5 years')
+    WHERE s.periodico and (c.fecha >= current_date - INTERVAL '5 years') and c.fecha <= current_date
     GROUP BY s.id_servicio, s.nombre, s.costo, c.fecha
     ORDER BY s.id_servicio, extract(year from c.fecha), extract(month from c.fecha), monto_facturado;
 
@@ -173,7 +149,7 @@ BEGIN
     UPDATE servicio
     SET nombre = new.nombre,
         costo = new.costo,
-        periodico = new.periodico   -- por el where. va o no va?
+        periodico = new.periodico   -- por el where. va o no va? Si periodico afecta los datos que aparecen en la vista (debido al filtro WHERE s.periodico), deberías incluirlo en el UPDATE para que los cambios de periodicidad reflejen si el servicio sigue o no en la vista.
     WHERE id_servicio = OLD.id_servicio;
 
     UPDATE lineacomprobante
